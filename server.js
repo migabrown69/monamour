@@ -2,8 +2,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -12,20 +12,26 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Persistencia ───────────────────────────────────────────────
-const DATA_FILE = path.join(__dirname, 'data.json');
+// ── MongoDB ────────────────────────────────────────────────────
+const MONGO_URI = process.env.MONGO_URI;
+let db;
 
-function loadData() {
-  if (!fs.existsSync(DATA_FILE)) return { users: {}, cartas: [], dibujos: [], rpsScore: { win: 0, lose: 0, tie: 0 } };
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
-  catch { return { users: {}, cartas: [], dibujos: [], rpsScore: { win: 0, lose: 0, tie: 0 } }; }
+async function connectDB() {
+  const client = new MongoClient(MONGO_URI);
+  await client.connect();
+  db = client.db('monamour');
+  console.log('MongoDB conectado');
 }
 
-function saveData() { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); }
+// Helpers colecciones
+const col = (name) => db.collection(name);
 
-let db = loadData();
-
-function hashPassword(p) { return crypto.createHash('sha256').update(p).digest('hex'); }
+async function getCartas()   { return col('cartas').find().sort({ fecha: 1 }).toArray(); }
+async function getDibujos()  { return col('dibujos').find().sort({ fecha: 1 }).toArray(); }
+async function getRpsScore() {
+  const doc = await col('config').findOne({ _id: 'rpsScore' });
+  return doc?.value || { win: 0, lose: 0, tie: 0 };
+}
 
 // ── Reto del día ───────────────────────────────────────────────
 const RETOS = [
@@ -62,94 +68,99 @@ const RETOS = [
 ];
 
 function getRetoDia() {
-  const day = Math.floor(Date.now() / 86400000); // días desde epoch
+  const day = Math.floor(Date.now() / 86400000);
   return RETOS[day % RETOS.length];
 }
 
-app.get('/api/reto', (req, res) => {
-  res.json({ reto: getRetoDia() });
+app.get('/api/reto', (req, res) => res.json({ reto: getRetoDia() }));
+
+// ── Auth ───────────────────────────────────────────────────────
+function hashPassword(p) { return crypto.createHash('sha256').update(p).digest('hex'); }
+
+app.get('/api/status', async (req, res) => {
+  const el   = await col('users').findOne({ _id: 'el' });
+  const ella = await col('users').findOne({ _id: 'ella' });
+  res.json({ el: !!el, ella: !!ella });
 });
 
-// ── REST auth ──────────────────────────────────────────────────
-app.get('/api/status', (req, res) => {
-  res.json({ el: !!db.users.el, ella: !!db.users.ella });
-});
-
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { who, password, name } = req.body;
   if (!['el','ella'].includes(who)) return res.status(400).json({ error: 'Rol inválido' });
-  if (db.users[who]) return res.status(409).json({ error: 'Ya registrado' });
+  const exists = await col('users').findOne({ _id: who });
+  if (exists) return res.status(409).json({ error: 'Ya registrado' });
   if (!password || password.length < 3) return res.status(400).json({ error: 'Contraseña muy corta' });
-  db.users[who] = { name: name?.trim() || (who === 'el' ? 'Él' : 'Ella'), avatar: who === 'el' ? '🐒' : '🌸', hash: hashPassword(password) };
-  saveData();
+  await col('users').insertOne({
+    _id: who,
+    name: name?.trim() || (who === 'el' ? 'Él' : 'Ella'),
+    avatar: who === 'el' ? '🐒' : '🌸',
+    hash: hashPassword(password),
+  });
   res.json({ ok: true });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { who, password } = req.body;
-  const user = db.users[who];
+  const user = await col('users').findOne({ _id: who });
   if (!user) return res.status(404).json({ error: 'No registrado' });
   if (user.hash !== hashPassword(password)) return res.status(401).json({ error: 'Contraseña incorrecta' });
   res.json({ ok: true, who, name: user.name, avatar: user.avatar });
 });
 
 // ── Socket.io ──────────────────────────────────────────────────
-// connected: { socketId -> { who, page } }
 const connected = {};
 
 function broadcastPresence() {
-  // Emite a todos la lista de { who, page }
   io.emit('presence', Object.values(connected));
 }
 
 io.on('connection', (socket) => {
 
-  socket.on('join', ({ who, page }) => {
+  socket.on('join', async ({ who, page }) => {
     connected[socket.id] = { who, page: page || 'home' };
-    socket.emit('init', { cartas: db.cartas, dibujos: db.dibujos, rpsScore: db.rpsScore });
+    const [cartas, dibujos, rpsScore] = await Promise.all([getCartas(), getDibujos(), getRpsScore()]);
+    socket.emit('init', { cartas, dibujos, rpsScore });
     broadcastPresence();
   });
 
-  // El cliente avisa cuando cambia de sección
   socket.on('page:change', (page) => {
-    if (connected[socket.id]) {
-      connected[socket.id].page = page;
-      broadcastPresence();
-    }
+    if (connected[socket.id]) { connected[socket.id].page = page; broadcastPresence(); }
   });
 
-  socket.on('carta:send', (texto) => {
+  socket.on('carta:send', async (texto) => {
     const who = connected[socket.id]?.who;
     if (!who || !texto.trim()) return;
     const carta = { de: who, texto: texto.trim(), fecha: new Date().toISOString(), leida: false };
-    db.cartas.push(carta);
-    saveData();
-    io.emit('carta:updated', db.cartas);
+    await col('cartas').insertOne(carta);
+    const cartas = await getCartas();
+    io.emit('carta:updated', cartas);
   });
 
-  socket.on('carta:read', (who) => {
-    db.cartas.forEach(c => { if (c.de !== who) c.leida = true; });
-    saveData();
-    io.emit('carta:updated', db.cartas);
+  socket.on('carta:read', async (who) => {
+    await col('cartas').updateMany({ de: { $ne: who } }, { $set: { leida: true } });
+    const cartas = await getCartas();
+    io.emit('carta:updated', cartas);
   });
 
-  socket.on('dibujo:save', ({ dataUrl, modo }) => {
+  socket.on('dibujo:save', async ({ dataUrl, modo }) => {
     const who = connected[socket.id]?.who;
     if (!who) return;
     const d = { de: who, dataUrl, modo: modo || 'libre', fecha: new Date().toISOString() };
-    db.dibujos.push(d);
-    if (db.dibujos.length > 40) db.dibujos.shift();
-    saveData();
+    await col('dibujos').insertOne(d);
+    // Mantener máximo 40 dibujos
+    const total = await col('dibujos').countDocuments();
+    if (total > 40) {
+      const oldest = await col('dibujos').find().sort({ fecha: 1 }).limit(total - 40).toArray();
+      await col('dibujos').deleteMany({ _id: { $in: oldest.map(o => o._id) } });
+    }
     io.emit('dibujo:new', d);
   });
 
   socket.on('dibujo:stroke', (data) => socket.broadcast.emit('dibujo:stroke', data));
   socket.on('dibujo:clear',  ()     => socket.broadcast.emit('dibujo:clear'));
 
-  socket.on('rps:score', (score) => {
-    db.rpsScore = score;
-    saveData();
-    io.emit('rps:score', db.rpsScore);
+  socket.on('rps:score', async (score) => {
+    await col('config').updateOne({ _id: 'rpsScore' }, { $set: { value: score } }, { upsert: true });
+    io.emit('rps:score', score);
   });
 
   socket.on('ttt:move',  (data) => io.emit('ttt:move', data));
@@ -161,5 +172,11 @@ io.on('connection', (socket) => {
   });
 });
 
+// ── Arrancar ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, () => console.log(`MonAmour corriendo en puerto ${PORT}`));
+connectDB().then(() => {
+  httpServer.listen(PORT, () => console.log(`MonAmour corriendo en puerto ${PORT}`));
+}).catch(err => {
+  console.error('Error conectando MongoDB:', err);
+  process.exit(1);
+});
