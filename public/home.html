@@ -89,11 +89,10 @@
     }
   }
 
-  initSocket((sock) => {
+  initSocket('home', (sock) => {
     sock.on('init', ({ cartas }) => renderPreview(cartas));
-    sock.on('carta:new', () => { /* badge se actualiza en carta:updated */ });
     sock.on('carta:updated', (cartas) => renderPreview(cartas));
-    sock.on('online', updateOnlineBadge);
+    sock.on('presence', updatePresence);
   });
 </script>
 </body>

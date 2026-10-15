@@ -111,13 +111,10 @@
     socket.emit('carta:read', session.who);
   }
 
-  initSocket((sock) => {
+  initSocket('cartas', (sock) => {
     sock.on('init', ({ cartas }) => renderCartas(cartas));
-    sock.on('carta:new', (carta) => {
-      // recargar lista completa desde el server via carta:updated
-    });
     sock.on('carta:updated', renderCartas);
-    sock.on('online', updateOnlineBadge);
+    sock.on('presence', updatePresence);
   });
 </script>
 </body>

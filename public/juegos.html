@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Juegos – MonAmour 🎮</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    .game-area { position: relative; }
+  </style>
 </head>
 <body>
 <div class="page" style="padding-bottom:80px;">
@@ -20,18 +23,18 @@
   </div>
 
   <!-- TRES EN RAYA -->
-  <div id="game-ttt" class="card" style="text-align:center; display:none;">
+  <div id="game-ttt" class="card game-area" style="text-align:center; display:none;">
     <h2>Tres en raya ⭕</h2>
     <p style="font-size:13px; color:var(--brown-light); margin-bottom:4px;">
-      🐒 Él = ✕ &nbsp;·&nbsp; 🌸 Ella = ○ &nbsp;·&nbsp; Turno sincronizado
+      🐒 Él = ✕ &nbsp;·&nbsp; 🌸 Ella = ○
     </p>
-    <p class="status-msg" id="ttt-status">Conectando...</p>
+    <p class="status-msg" id="ttt-status"></p>
     <div class="game-grid" id="ttt-board"></div>
     <button class="btn btn-pink" onclick="tttReset()">Reiniciar 🔄</button>
   </div>
 
-  <!-- MEMORY (local) -->
-  <div id="game-memory" class="card" style="text-align:center; display:none;">
+  <!-- MEMORY -->
+  <div id="game-memory" class="card game-area" style="text-align:center; display:none;">
     <h2>Memory 🧠</h2>
     <p class="status-msg" id="mem-status">¡Encuentra los pares!</p>
     <div id="mem-board" style="display:grid; grid-template-columns:repeat(4,70px); gap:8px; justify-content:center; margin:16px auto;"></div>
@@ -39,7 +42,7 @@
   </div>
 
   <!-- PIEDRA PAPEL TIJERA -->
-  <div id="game-rps" class="card" style="text-align:center; display:none;">
+  <div id="game-rps" class="card game-area" style="text-align:center; display:none;">
     <h2>Piedra, Papel o Tijera ✌️</h2>
     <p style="font-size:13px; color:var(--brown-light);">Tú vs la suerte 🎲</p>
     <div style="display:flex; justify-content:center; gap:16px; margin:20px 0;">
@@ -65,18 +68,28 @@
 <script src="app.js"></script>
 <script>
   const session = requireAuth();
+  let currentGame = null;
+  let gameReady = false; // true cuando el otro también está aquí
 
   function showGame(id) {
     ['ttt','memory','rps'].forEach(g =>
       document.getElementById('game-' + g).style.display = g === id ? 'block' : 'none'
     );
-    if (id === 'ttt')    tttInit();
-    if (id === 'memory') memReset();
-    if (id === 'rps')    rpsInit();
+    currentGame = id;
+    gameReady = false;
+    setPage('juegos:' + id);
+
+    // Mostrar overlay y esperar al otro
+    showWaitingOverlay('#game-' + id, 'juegos:' + id, () => {
+      gameReady = true;
+      if (id === 'ttt')    tttInit();
+      if (id === 'memory') memReset();
+      if (id === 'rps')    rpsInit();
+    });
   }
 
   // =====================
-  // TRES EN RAYA – sincronizado via socket
+  // TRES EN RAYA
   // =====================
   const TTT_PLAYERS = {
     el:   { sym: '✕', name: '🐒 Él' },
@@ -103,7 +116,7 @@
       btn.style.fontSize = '1.6rem';
       btn.style.fontWeight = 'bold';
       btn.onclick = () => {
-        if (!tttActive || tttBoard[i] || tttCurrentTurn !== session.who) return;
+        if (!tttActive || !gameReady || tttBoard[i] || tttCurrentTurn !== session.who) return;
         socket.emit('ttt:move', { index: i, player: session.who });
       };
       board.appendChild(btn);
@@ -123,7 +136,6 @@
     tttBoard[index] = player;
     tttCurrentTurn = player === 'el' ? 'ella' : 'el';
     renderTttBoard();
-
     const win = TTT_WINS.find(c => c.every(j => tttBoard[j] === player));
     if (win) {
       document.getElementById('ttt-status').textContent = `¡Ganó ${TTT_PLAYERS[player].name}! 🎉`;
@@ -139,20 +151,21 @@
     updateTttStatus();
   }
 
-  function tttReset() { socket.emit('ttt:reset'); }
+  function tttReset() {
+    if (!gameReady) return;
+    socket.emit('ttt:reset');
+  }
 
   // =====================
-  // MEMORY (local)
+  // MEMORY (local, sin sync)
   // =====================
   const MEM_EMOJIS = ['🐒','🌸','🍫','💕','🎀','🌙','🍂','🦋'];
   let memCards, memFlipped, memMatched, memLocked;
 
   function memReset() {
     const pairs = [...MEM_EMOJIS, ...MEM_EMOJIS].sort(() => Math.random() - 0.5);
-    memCards  = pairs.map((e, i) => ({ id: i, emoji: e, flipped: false, matched: false }));
-    memFlipped = [];
-    memMatched = 0;
-    memLocked  = false;
+    memCards   = pairs.map((e, i) => ({ id: i, emoji: e, flipped: false, matched: false }));
+    memFlipped = []; memMatched = 0; memLocked = false;
     document.getElementById('mem-status').textContent = '¡Encuentra los pares!';
     renderMem();
   }
@@ -165,16 +178,11 @@
       btn.className = 'game-btn';
       btn.style.width = '70px'; btn.style.height = '70px'; btn.style.fontSize = '1.6rem';
       if (c.matched) {
-        btn.textContent = c.emoji;
-        btn.style.background = 'var(--pink-light)';
-        btn.style.opacity = '0.5';
-        btn.disabled = true;
+        btn.textContent = c.emoji; btn.style.background = 'var(--pink-light)'; btn.style.opacity = '0.5'; btn.disabled = true;
       } else if (c.flipped) {
-        btn.textContent = c.emoji;
-        btn.style.background = 'var(--pink-mid)';
+        btn.textContent = c.emoji; btn.style.background = 'var(--pink-mid)';
       } else {
-        btn.textContent = '?';
-        btn.onclick = () => memFlip(c.id);
+        btn.textContent = '?'; btn.onclick = () => memFlip(c.id);
       }
       board.appendChild(btn);
     });
@@ -184,25 +192,16 @@
     if (memLocked) return;
     const card = memCards[id];
     if (card.flipped || card.matched) return;
-    card.flipped = true;
-    memFlipped.push(id);
-    renderMem();
+    card.flipped = true; memFlipped.push(id); renderMem();
     if (memFlipped.length === 2) {
       memLocked = true;
       const [a, b] = memFlipped.map(i => memCards[i]);
       if (a.emoji === b.emoji) {
-        a.matched = b.matched = true;
-        memMatched += 2;
-        memFlipped = []; memLocked = false;
-        if (memMatched === memCards.length)
-          document.getElementById('mem-status').textContent = '¡Completaste el memory! 🎉🐒';
+        a.matched = b.matched = true; memMatched += 2; memFlipped = []; memLocked = false;
+        if (memMatched === memCards.length) document.getElementById('mem-status').textContent = '¡Completaste el memory! 🎉🐒';
         renderMem();
       } else {
-        setTimeout(() => {
-          a.flipped = b.flipped = false;
-          memFlipped = []; memLocked = false;
-          renderMem();
-        }, 900);
+        setTimeout(() => { a.flipped = b.flipped = false; memFlipped = []; memLocked = false; renderMem(); }, 900);
       }
     }
   }
@@ -211,24 +210,18 @@
   // PIEDRA PAPEL TIJERA
   // =====================
   const RPS_OPTS  = ['piedra','papel','tijera'];
-  const RPS_EMOJI = { piedra: '🪨', papel: '📄', tijera: '✂️' };
+  const RPS_EMOJI = { piedra:'🪨', papel:'📄', tijera:'✂️' };
   let rpsScore;
 
-  function rpsInit() {
-    // El score viene del server via init
-    document.getElementById('rps-result').textContent = '';
-  }
+  function rpsInit() { document.getElementById('rps-result').textContent = ''; }
 
   function rpsPlay(choice) {
+    if (!gameReady) return;
     const cpu = RPS_OPTS[Math.floor(Math.random() * 3)];
     let result, msg;
     if (choice === cpu) {
       result = 'tie'; msg = `¡Empate! ${RPS_EMOJI[choice]} vs ${RPS_EMOJI[cpu]} 🤝`;
-    } else if (
-      (choice==='piedra'&&cpu==='tijera') ||
-      (choice==='papel' &&cpu==='piedra') ||
-      (choice==='tijera'&&cpu==='papel')
-    ) {
+    } else if ((choice==='piedra'&&cpu==='tijera')||(choice==='papel'&&cpu==='piedra')||(choice==='tijera'&&cpu==='papel')) {
       result = 'win'; msg = `¡Ganaste! ${RPS_EMOJI[choice]} vence a ${RPS_EMOJI[cpu]} 🎉`;
     } else {
       result = 'lose'; msg = `¡Perdiste! ${RPS_EMOJI[cpu]} vence a ${RPS_EMOJI[choice]} 😅`;
@@ -245,7 +238,7 @@
   }
 
   function rpsReset() {
-    rpsScore = { win: 0, lose: 0, tie: 0 };
+    rpsScore = { win:0, lose:0, tie:0 };
     socket.emit('rps:score', rpsScore);
     renderRpsScore();
     document.getElementById('rps-result').textContent = '';
@@ -254,13 +247,15 @@
   // =====================
   // SOCKET
   // =====================
-  initSocket((sock) => {
-    sock.on('init', (data) => {
-      rpsScore = data.rpsScore;
+  initSocket('juegos', (sock) => {
+    sock.on('init', (data) => { rpsScore = data.rpsScore; });
+    sock.on('presence', (list) => {
+      updatePresence(list);
+      // Re-chequear overlay si hay uno activo
+      if (window._waitingCheck) window._waitingCheck();
     });
-    sock.on('online', updateOnlineBadge);
     sock.on('ttt:move',  applyTttMove);
-    sock.on('ttt:reset', tttInit);
+    sock.on('ttt:reset', () => { if (gameReady) tttInit(); });
     sock.on('rps:score', (score) => { rpsScore = score; renderRpsScore(); });
   });
 

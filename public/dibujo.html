@@ -5,30 +5,74 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pizarra – MonAmour 🎨</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    .modo-tab {
+      flex: 1; padding: 10px; border: 2px solid var(--pink-mid);
+      background: var(--white); border-radius: 12px; cursor: pointer;
+      font-family: 'Quicksand', sans-serif; font-size: 14px; font-weight: 700;
+      color: var(--brown-mid); transition: background 0.15s, color 0.15s;
+    }
+    .modo-tab.active {
+      background: var(--pink-dark); color: var(--white); border-color: var(--pink-dark);
+    }
+    .reto-box {
+      background: var(--pink-light); border: 2px dashed var(--pink-dark);
+      border-radius: 14px; padding: 14px 18px; margin-bottom: 14px;
+      font-size: 15px; font-weight: 600; color: var(--brown-dark);
+      text-align: center; line-height: 1.5;
+    }
+    .reto-label {
+      font-size: 11px; font-weight: 700; color: var(--brown-light);
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
+    }
+  </style>
 </head>
 <body>
 <div class="page" style="padding-bottom:80px;">
 
   <h1 class="title" style="margin-top:16px;">Pizarra 🎨</h1>
-  <p class="subtitle">Dibuja y comparte con tu persona 🐒</p>
-  <div id="online-status" style="text-align:center; font-size:13px; margin-bottom:4px;"></div>
+  <div id="online-status" style="text-align:center; font-size:13px; margin-bottom:8px;"></div>
 
-  <div class="card">
+  <!-- Tabs de modo -->
+  <div style="display:flex; gap:10px; max-width:480px; width:100%; padding:0 12px; margin-bottom:4px;">
+    <button class="modo-tab active" id="tab-libre" onclick="setModo('libre')">🖌 Dibujo libre</button>
+    <button class="modo-tab" id="tab-reto" onclick="setModo('reto')">🎯 Reto del día</button>
+  </div>
+
+  <div class="card" style="width:100%; max-width:480px;">
+
+    <!-- Reto del día (oculto en modo libre) -->
+    <div id="reto-container" style="display:none;">
+      <div class="reto-label">🎯 Reto de hoy</div>
+      <div class="reto-box" id="reto-texto">Cargando...</div>
+    </div>
+
+    <!-- Herramientas -->
     <div class="tools">
       <div id="colors" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
       <input type="range" id="size" min="2" max="30" value="5"
              style="width:80px; background:none; border:none; padding:0;">
-      <button class="btn btn-pink" onclick="clearCanvas()">🗑 Limpiar</button>
+      <button class="btn btn-pink" onclick="clearCanvas()">🗑</button>
       <button class="btn" onclick="guardar()">💾 Guardar</button>
     </div>
-    <canvas id="drawCanvas" width="440" height="340"></canvas>
+
+    <canvas id="drawCanvas" width="440" height="320"></canvas>
+
     <p id="save-ok" style="color:var(--brown-mid); font-weight:700; text-align:center; margin-top:8px; display:none;">
       ¡Dibujo guardado! 🎉
     </p>
   </div>
 
-  <div class="card">
-    <h2>Galería compartida 🖼</h2>
+  <!-- Galería con filtros -->
+  <div class="card" style="width:100%; max-width:480px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2 style="margin:0;">Galería 🖼</h2>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-pink" style="padding:6px 12px; font-size:12px;" onclick="filtrarGaleria('todos')">Todos</button>
+        <button class="btn" style="padding:6px 12px; font-size:12px;" onclick="filtrarGaleria('libre')">Libres</button>
+        <button class="btn" style="padding:6px 12px; font-size:12px;" onclick="filtrarGaleria('reto')">Retos</button>
+      </div>
+    </div>
     <div id="galeria" style="display:flex; flex-wrap:wrap; gap:12px;"></div>
   </div>
 
@@ -48,12 +92,31 @@
   const canvas  = document.getElementById('drawCanvas');
   const ctx     = canvas.getContext('2d');
 
+  let modoActual = 'libre';
+  let todosLosDibujos = [];
+  let filtroActual = 'todos';
+
+  // ── Modo libre / reto ──────────────────────────────────────
+  function setModo(modo) {
+    modoActual = modo;
+    document.getElementById('tab-libre').classList.toggle('active', modo === 'libre');
+    document.getElementById('tab-reto').classList.toggle('active', modo === 'reto');
+    document.getElementById('reto-container').style.display = modo === 'reto' ? 'block' : 'none';
+    clearCanvas(false); // limpiar sin emitir
+    setPage('dibujo:' + modo);
+  }
+
+  // Cargar reto del día
+  fetch('/api/reto').then(r => r.json()).then(({ reto }) => {
+    document.getElementById('reto-texto').textContent = reto;
+  });
+
+  // ── Canvas ────────────────────────────────────────────────
   const COLORS = ['#4a2c17','#a0522d','#d4a574','#e8a0b4','#f5c6d0','#5b8a5e','#4a90d9','#e74c3c','#f39c12','#000000','#ffffff'];
   let currentColor = COLORS[0];
   let painting = false;
-  let eraser   = false;
+  let eraser = false;
 
-  // Paleta de colores
   const colorsDiv = document.getElementById('colors');
   COLORS.forEach(c => {
     const dot = document.createElement('div');
@@ -63,39 +126,28 @@
     dot.onclick = () => {
       document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('selected'));
       dot.classList.add('selected');
-      currentColor = c;
-      eraser = false;
-      eraserBtn.style.opacity = '1';
+      currentColor = c; eraser = false; eraserBtn.style.opacity = '1';
     };
     colorsDiv.appendChild(dot);
   });
 
   const eraserBtn = document.createElement('button');
-  eraserBtn.textContent = '🧹';
-  eraserBtn.className = 'btn btn-pink';
-  eraserBtn.style.padding = '6px 12px';
-  eraserBtn.onclick = () => {
-    eraser = !eraser;
-    eraserBtn.style.opacity = eraser ? '0.5' : '1';
-  };
+  eraserBtn.textContent = '🧹'; eraserBtn.className = 'btn btn-pink'; eraserBtn.style.padding = '6px 12px';
+  eraserBtn.onclick = () => { eraser = !eraser; eraserBtn.style.opacity = eraser ? '0.5' : '1'; };
   colorsDiv.appendChild(eraserBtn);
 
-  // Helpers posición
   function getPos(e) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
     const src = e.touches ? e.touches[0] : e;
     return {
-      x: (src.clientX - rect.left) * scaleX,
-      y: (src.clientY - rect.top)  * scaleY,
+      x: (src.clientX - rect.left) * (canvas.width  / rect.width),
+      y: (src.clientY - rect.top)  * (canvas.height / rect.height),
     };
   }
 
-  // Dibujar localmente
   function drawStroke(x, y, color, size, isEraser, begin) {
-    ctx.lineWidth  = isEraser ? size * 3 : size;
-    ctx.lineCap    = 'round';
+    ctx.lineWidth   = isEraser ? size * 3 : size;
+    ctx.lineCap     = 'round';
     ctx.strokeStyle = isEraser ? '#ffffff' : color;
     if (begin) { ctx.beginPath(); ctx.moveTo(x, y); }
     else { ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y); }
@@ -113,7 +165,6 @@
     const { x, y } = getPos(e);
     const size = +document.getElementById('size').value;
     drawStroke(x, y, currentColor, size, eraser, false);
-    // Emitir trazo al otro
     socket.emit('dibujo:stroke', { x, y, color: currentColor, size, eraser });
   }
 
@@ -127,62 +178,65 @@
   canvas.addEventListener('touchmove',  draw,      { passive: false });
   canvas.addEventListener('touchend',   stopDraw);
 
-  function clearCanvas() {
+  function clearCanvas(emit = true) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    socket.emit('dibujo:clear');
+    if (emit && socket) socket.emit('dibujo:clear');
   }
 
   function guardar() {
-    socket.emit('dibujo:save', canvas.toDataURL('image/png'));
+    socket.emit('dibujo:save', { dataUrl: canvas.toDataURL('image/png'), modo: modoActual });
     const ok = document.getElementById('save-ok');
     ok.style.display = 'block';
     setTimeout(() => ok.style.display = 'none', 2500);
   }
 
+  // ── Galería ───────────────────────────────────────────────
   function renderGaleria(dibujos) {
+    todosLosDibujos = dibujos || [];
+    aplicarFiltro();
+  }
+
+  function filtrarGaleria(filtro) {
+    filtroActual = filtro;
+    aplicarFiltro();
+  }
+
+  function aplicarFiltro() {
+    const lista = filtroActual === 'todos'
+      ? todosLosDibujos
+      : todosLosDibujos.filter(d => d.modo === filtroActual);
+
     const cont = document.getElementById('galeria');
-    if (!dibujos || dibujos.length === 0) {
-      cont.innerHTML = '<p style="color:var(--brown-light); font-size:14px;">Todavía no hay dibujos 🎨</p>';
+    if (lista.length === 0) {
+      cont.innerHTML = '<p style="color:var(--brown-light); font-size:14px;">Todavía no hay dibujos aquí 🎨</p>';
       return;
     }
-    cont.innerHTML = [...dibujos].reverse().map(d => `
+    cont.innerHTML = [...lista].reverse().map(d => `
       <div style="text-align:center;">
         <div style="font-size:11px; color:var(--brown-light); margin-bottom:4px;">
-          ${USERS[d.de].avatar} ${USERS[d.de].name} · ${formatDate(d.fecha)}
+          ${USERS[d.de].avatar} ${USERS[d.de].name}
+          ${d.modo === 'reto' ? '<span class="badge" style="background:var(--brown-light);">Reto</span>' : ''}
+          · ${formatDate(d.fecha)}
         </div>
         <img src="${d.dataUrl}"
              style="width:180px; height:140px; object-fit:cover; border-radius:12px; border:2px solid var(--pink-mid);">
       </div>`).join('');
   }
 
-  let prevStroke = null;
+  // ── Socket ────────────────────────────────────────────────
+  initSocket('dibujo', (sock) => {
+    sock.on('init',     ({ dibujos }) => renderGaleria(dibujos));
+    sock.on('presence', (list) => updatePresence(list));
 
-  initSocket((sock) => {
-    sock.on('init', ({ dibujos }) => renderGaleria(dibujos));
-    sock.on('online', updateOnlineBadge);
-
-    // Recibir trazo en tiempo real
     sock.on('dibujo:stroke', ({ x, y, color, size, eraser: isE }) => {
-      drawStroke(x, y, color, size, isE, prevStroke === null);
-      prevStroke = { x, y };
+      drawStroke(x, y, color, size, isE, false);
     });
 
     sock.on('dibujo:clear', () => ctx.clearRect(0, 0, canvas.width, canvas.height));
 
     sock.on('dibujo:new', (d) => {
-      // Agregar a galería sin recargar todo
-      const cont = document.getElementById('galeria');
-      const placeholder = cont.querySelector('p');
-      if (placeholder) cont.innerHTML = '';
-      const div = document.createElement('div');
-      div.style.textAlign = 'center';
-      div.innerHTML = `
-        <div style="font-size:11px; color:var(--brown-light); margin-bottom:4px;">
-          ${USERS[d.de].avatar} ${USERS[d.de].name} · ${formatDate(d.fecha)}
-        </div>
-        <img src="${d.dataUrl}"
-             style="width:180px; height:140px; object-fit:cover; border-radius:12px; border:2px solid var(--pink-mid);">`;
-      cont.prepend(div);
+      todosLosDibujos.push(d);
+      aplicarFiltro();
     });
   });
 </script>

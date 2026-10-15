@@ -13,21 +13,43 @@
   <p class="subtitle">Tu espacio secreto juntos 💕</p>
 
   <div class="card" style="max-width:340px; margin-top:10px;">
-    <div class="form-group">
-      <label>¿Quién eres?</label>
-      <select id="who">
-        <option value="el">🐒 Él</option>
-        <option value="ella">🌸 Ella</option>
-      </select>
+
+    <!-- Paso 1: elegir rol -->
+    <div id="step-rol">
+      <label style="text-align:center; display:block; margin-bottom:16px;">¿Quién eres?</label>
+      <div style="display:flex; gap:12px;">
+        <button class="btn btn-pink" style="flex:1; font-size:1.3rem;" onclick="elegirRol('el')">🐒<br><small>Él</small></button>
+        <button class="btn btn-pink" style="flex:1; font-size:1.3rem;" onclick="elegirRol('ella')">🌸<br><small>Ella</small></button>
+      </div>
     </div>
-    <div class="form-group">
-      <label>Contraseña</label>
-      <input type="password" id="pass" placeholder="••••••" autocomplete="current-password">
+
+    <!-- Paso 2: registro o login -->
+    <div id="step-form" style="display:none;">
+      <p id="form-title" style="font-weight:700; color:var(--brown-mid); margin-bottom:16px; text-align:center;"></p>
+
+      <!-- Solo en registro -->
+      <div id="field-name" class="form-group" style="display:none;">
+        <label>Tu nombre 💕</label>
+        <input type="text" id="inp-name" placeholder="¿Cómo te llamas?">
+      </div>
+
+      <div class="form-group">
+        <label id="pass-label">Contraseña</label>
+        <input type="password" id="inp-pass" placeholder="••••••" autocomplete="current-password">
+      </div>
+
+      <!-- Solo en registro -->
+      <div id="field-pass2" class="form-group" style="display:none;">
+        <label>Repetir contraseña</label>
+        <input type="password" id="inp-pass2" placeholder="••••••">
+      </div>
+
+      <button class="btn btn-pink" style="width:100%; margin-bottom:8px;" id="btn-submit" onclick="submitForm()">Entrar 💌</button>
+      <button class="btn" style="width:100%; background:var(--brown-light); font-size:13px;" onclick="volverRol()">← Cambiar</button>
+
+      <p id="err" style="color:#c0392b; font-size:13px; text-align:center; margin-top:10px; display:none;"></p>
     </div>
-    <button class="btn btn-pink" style="width:100%" onclick="doLogin()">Entrar 💌</button>
-    <p id="err" style="color:#c0392b; font-size:13px; text-align:center; margin-top:10px; display:none;">
-      Contraseña incorrecta 🙈
-    </p>
+
   </div>
 </div>
 
@@ -36,21 +58,82 @@
 <script>
   if (getSession()) window.location.href = 'home.html';
 
-  function doLogin() {
-    const who = document.getElementById('who').value;
-    const pass = document.getElementById('pass').value;
-    if (login(who, pass)) {
-      window.location.href = 'home.html';
+  let currentWho = null;
+  let isRegister = false;
+
+  async function elegirRol(who) {
+    currentWho = who;
+    const res = await fetch('/api/status');
+    const status = await res.json();
+    isRegister = !status[who];
+
+    document.getElementById('step-rol').style.display = 'none';
+    document.getElementById('step-form').style.display = 'block';
+
+    const avatar = who === 'el' ? '🐒' : '🌸';
+    if (isRegister) {
+      document.getElementById('form-title').textContent = `${avatar} Primera vez — crea tu contraseña`;
+      document.getElementById('field-name').style.display = 'block';
+      document.getElementById('field-pass2').style.display = 'block';
+      document.getElementById('btn-submit').textContent = 'Registrarme 🎉';
     } else {
-      const err = document.getElementById('err');
-      err.style.display = 'block';
-      setTimeout(() => err.style.display = 'none', 2500);
+      document.getElementById('form-title').textContent = `${avatar} Bienvenido/a de vuelta`;
+      document.getElementById('field-name').style.display = 'none';
+      document.getElementById('field-pass2').style.display = 'none';
+      document.getElementById('btn-submit').textContent = 'Entrar 💌';
     }
   }
 
-  document.getElementById('pass').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doLogin();
-  });
+  function volverRol() {
+    document.getElementById('step-rol').style.display = 'block';
+    document.getElementById('step-form').style.display = 'none';
+    document.getElementById('inp-pass').value = '';
+    document.getElementById('inp-pass2').value = '';
+    document.getElementById('inp-name').value = '';
+    hideErr();
+  }
+
+  async function submitForm() {
+    hideErr();
+    const pass  = document.getElementById('inp-pass').value;
+    const pass2 = document.getElementById('inp-pass2').value;
+    const name  = document.getElementById('inp-name').value;
+
+    if (!pass) return showErr('Ingresa una contraseña');
+
+    if (isRegister) {
+      if (pass.length < 3) return showErr('Mínimo 3 caracteres');
+      if (pass !== pass2)  return showErr('Las contraseñas no coinciden');
+      const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ who: currentWho, password: pass, name }),
+      });
+      const data = await res.json();
+      if (!res.ok) return showErr(data.error);
+    }
+
+    // Login
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ who: currentWho, password: pass }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showErr(data.error);
+
+    sessionStorage.setItem('session', JSON.stringify({ who: data.who, name: data.name, avatar: data.avatar }));
+    window.location.href = 'home.html';
+  }
+
+  function showErr(msg) {
+    const el = document.getElementById('err');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function hideErr() { document.getElementById('err').style.display = 'none'; }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Enter') submitForm(); });
 </script>
 </body>
 </html>
