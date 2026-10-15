@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MonAmour 🐒💕</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-mono">🐒</div>
+  <h1 class="title">MonAmour</h1>
+  <p class="subtitle">Tu espacio secreto juntos 💕</p>
+
+  <div class="card" style="max-width:340px; margin-top:10px;">
+    <div class="form-group">
+      <label>¿Quién eres?</label>
+      <select id="who">
+        <option value="el">🐒 Él</option>
+        <option value="ella">🌸 Ella</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Contraseña</label>
+      <input type="password" id="pass" placeholder="••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-pink" style="width:100%" onclick="doLogin()">Entrar 💌</button>
+    <p id="err" style="color:#c0392b; font-size:13px; text-align:center; margin-top:10px; display:none;">
+      Contraseña incorrecta 🙈
+    </p>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+<script>
+  if (getSession()) window.location.href = 'home.html';
+
+  function doLogin() {
+    const who = document.getElementById('who').value;
+    const pass = document.getElementById('pass').value;
+    if (login(who, pass)) {
+      window.location.href = 'home.html';
+    } else {
+      const err = document.getElementById('err');
+      err.style.display = 'block';
+      setTimeout(() => err.style.display = 'none', 2500);
+    }
+  }
+
+  document.getElementById('pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+</script>
+</body>
+</html>

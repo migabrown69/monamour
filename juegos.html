@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Juegos – MonAmour 🎮</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page" style="padding-bottom:80px;">
+
+  <h1 class="title" style="margin-top:16px;">Jueguitos 🎮</h1>
+  <p class="subtitle">Para entretenernos juntos 🐒💕</p>
+  <div id="online-status" style="text-align:center; font-size:13px; margin-bottom:4px;"></div>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:10px 0;">
+    <button class="btn btn-pink" onclick="showGame('ttt')">⭕ Tres en raya</button>
+    <button class="btn btn-pink" onclick="showGame('memory')">🧠 Memory</button>
+    <button class="btn btn-pink" onclick="showGame('rps')">✌️ Piedra Papel</button>
+  </div>
+
+  <!-- TRES EN RAYA -->
+  <div id="game-ttt" class="card" style="text-align:center; display:none;">
+    <h2>Tres en raya ⭕</h2>
+    <p style="font-size:13px; color:var(--brown-light); margin-bottom:4px;">
+      🐒 Él = ✕ &nbsp;·&nbsp; 🌸 Ella = ○ &nbsp;·&nbsp; Turno sincronizado
+    </p>
+    <p class="status-msg" id="ttt-status">Conectando...</p>
+    <div class="game-grid" id="ttt-board"></div>
+    <button class="btn btn-pink" onclick="tttReset()">Reiniciar 🔄</button>
+  </div>
+
+  <!-- MEMORY (local) -->
+  <div id="game-memory" class="card" style="text-align:center; display:none;">
+    <h2>Memory 🧠</h2>
+    <p class="status-msg" id="mem-status">¡Encuentra los pares!</p>
+    <div id="mem-board" style="display:grid; grid-template-columns:repeat(4,70px); gap:8px; justify-content:center; margin:16px auto;"></div>
+    <button class="btn btn-pink" onclick="memReset()">Reiniciar 🔄</button>
+  </div>
+
+  <!-- PIEDRA PAPEL TIJERA -->
+  <div id="game-rps" class="card" style="text-align:center; display:none;">
+    <h2>Piedra, Papel o Tijera ✌️</h2>
+    <p style="font-size:13px; color:var(--brown-light);">Tú vs la suerte 🎲</p>
+    <div style="display:flex; justify-content:center; gap:16px; margin:20px 0;">
+      <button class="game-btn" onclick="rpsPlay('piedra')">🪨</button>
+      <button class="game-btn" onclick="rpsPlay('papel')">📄</button>
+      <button class="game-btn" onclick="rpsPlay('tijera')">✂️</button>
+    </div>
+    <div id="rps-result" style="font-size:15px; min-height:60px; line-height:1.8;"></div>
+    <div id="rps-score"  style="font-size:13px; color:var(--brown-light); margin-top:8px;"></div>
+    <button class="btn btn-pink" style="margin-top:12px;" onclick="rpsReset()">Reiniciar marcador 🔄</button>
+  </div>
+
+</div>
+
+<nav>
+  <a href="home.html"><span class="icon">🏠</span>Inicio</a>
+  <a href="carta.html"><span class="icon">💌</span>Cartas<span class="badge" id="carta-badge" style="display:none;"></span></a>
+  <a href="dibujo.html"><span class="icon">🎨</span>Dibujos</a>
+  <a href="juegos.html" class="active"><span class="icon">🎮</span>Juegos</a>
+</nav>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+<script>
+  const session = requireAuth();
+
+  function showGame(id) {
+    ['ttt','memory','rps'].forEach(g =>
+      document.getElementById('game-' + g).style.display = g === id ? 'block' : 'none'
+    );
+    if (id === 'ttt')    tttInit();
+    if (id === 'memory') memReset();
+    if (id === 'rps')    rpsInit();
+  }
+
+  // =====================
+  // TRES EN RAYA – sincronizado via socket
+  // =====================
+  const TTT_PLAYERS = {
+    el:   { sym: '✕', name: '🐒 Él' },
+    ella: { sym: '○', name: '🌸 Ella' },
+  };
+  let tttBoard, tttCurrentTurn, tttActive;
+
+  function tttInit() {
+    tttBoard = Array(9).fill(null);
+    tttCurrentTurn = 'el';
+    tttActive = true;
+    renderTttBoard();
+    updateTttStatus();
+  }
+
+  function renderTttBoard() {
+    const board = document.getElementById('ttt-board');
+    board.innerHTML = '';
+    tttBoard.forEach((cell, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'game-btn';
+      btn.textContent = cell ? TTT_PLAYERS[cell].sym : '';
+      btn.style.background = cell === 'el' ? 'var(--pink-light)' : cell === 'ella' ? '#e8f4e8' : '';
+      btn.style.fontSize = '1.6rem';
+      btn.style.fontWeight = 'bold';
+      btn.onclick = () => {
+        if (!tttActive || tttBoard[i] || tttCurrentTurn !== session.who) return;
+        socket.emit('ttt:move', { index: i, player: session.who });
+      };
+      board.appendChild(btn);
+    });
+  }
+
+  function updateTttStatus() {
+    const p = TTT_PLAYERS[tttCurrentTurn];
+    document.getElementById('ttt-status').textContent =
+      tttCurrentTurn === session.who ? `Tu turno ${p.sym}` : `Turno de ${p.name}`;
+  }
+
+  const TTT_WINS = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+  function applyTttMove({ index, player }) {
+    if (!tttActive || tttBoard[index]) return;
+    tttBoard[index] = player;
+    tttCurrentTurn = player === 'el' ? 'ella' : 'el';
+    renderTttBoard();
+
+    const win = TTT_WINS.find(c => c.every(j => tttBoard[j] === player));
+    if (win) {
+      document.getElementById('ttt-status').textContent = `¡Ganó ${TTT_PLAYERS[player].name}! 🎉`;
+      win.forEach(j => document.getElementById('ttt-board').children[j].style.background = 'var(--pink-dark)');
+      tttActive = false;
+      return;
+    }
+    if (tttBoard.every(c => c !== null)) {
+      document.getElementById('ttt-status').textContent = '¡Empate! 🤝';
+      tttActive = false;
+      return;
+    }
+    updateTttStatus();
+  }
+
+  function tttReset() { socket.emit('ttt:reset'); }
+
+  // =====================
+  // MEMORY (local)
+  // =====================
+  const MEM_EMOJIS = ['🐒','🌸','🍫','💕','🎀','🌙','🍂','🦋'];
+  let memCards, memFlipped, memMatched, memLocked;
+
+  function memReset() {
+    const pairs = [...MEM_EMOJIS, ...MEM_EMOJIS].sort(() => Math.random() - 0.5);
+    memCards  = pairs.map((e, i) => ({ id: i, emoji: e, flipped: false, matched: false }));
+    memFlipped = [];
+    memMatched = 0;
+    memLocked  = false;
+    document.getElementById('mem-status').textContent = '¡Encuentra los pares!';
+    renderMem();
+  }
+
+  function renderMem() {
+    const board = document.getElementById('mem-board');
+    board.innerHTML = '';
+    memCards.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'game-btn';
+      btn.style.width = '70px'; btn.style.height = '70px'; btn.style.fontSize = '1.6rem';
+      if (c.matched) {
+        btn.textContent = c.emoji;
+        btn.style.background = 'var(--pink-light)';
+        btn.style.opacity = '0.5';
+        btn.disabled = true;
+      } else if (c.flipped) {
+        btn.textContent = c.emoji;
+        btn.style.background = 'var(--pink-mid)';
+      } else {
+        btn.textContent = '?';
+        btn.onclick = () => memFlip(c.id);
+      }
+      board.appendChild(btn);
+    });
+  }
+
+  function memFlip(id) {
+    if (memLocked) return;
+    const card = memCards[id];
+    if (card.flipped || card.matched) return;
+    card.flipped = true;
+    memFlipped.push(id);
+    renderMem();
+    if (memFlipped.length === 2) {
+      memLocked = true;
+      const [a, b] = memFlipped.map(i => memCards[i]);
+      if (a.emoji === b.emoji) {
+        a.matched = b.matched = true;
+        memMatched += 2;
+        memFlipped = []; memLocked = false;
+        if (memMatched === memCards.length)
+          document.getElementById('mem-status').textContent = '¡Completaste el memory! 🎉🐒';
+        renderMem();
+      } else {
+        setTimeout(() => {
+          a.flipped = b.flipped = false;
+          memFlipped = []; memLocked = false;
+          renderMem();
+        }, 900);
+      }
+    }
+  }
+
+  // =====================
+  // PIEDRA PAPEL TIJERA
+  // =====================
+  const RPS_OPTS  = ['piedra','papel','tijera'];
+  const RPS_EMOJI = { piedra: '🪨', papel: '📄', tijera: '✂️' };
+  let rpsScore;
+
+  function rpsInit() {
+    // El score viene del server via init
+    document.getElementById('rps-result').textContent = '';
+  }
+
+  function rpsPlay(choice) {
+    const cpu = RPS_OPTS[Math.floor(Math.random() * 3)];
+    let result, msg;
+    if (choice === cpu) {
+      result = 'tie'; msg = `¡Empate! ${RPS_EMOJI[choice]} vs ${RPS_EMOJI[cpu]} 🤝`;
+    } else if (
+      (choice==='piedra'&&cpu==='tijera') ||
+      (choice==='papel' &&cpu==='piedra') ||
+      (choice==='tijera'&&cpu==='papel')
+    ) {
+      result = 'win'; msg = `¡Ganaste! ${RPS_EMOJI[choice]} vence a ${RPS_EMOJI[cpu]} 🎉`;
+    } else {
+      result = 'lose'; msg = `¡Perdiste! ${RPS_EMOJI[cpu]} vence a ${RPS_EMOJI[choice]} 😅`;
+    }
+    rpsScore[result]++;
+    socket.emit('rps:score', rpsScore);
+    document.getElementById('rps-result').innerHTML = `<b style="font-size:1.2rem;">${msg}</b>`;
+    renderRpsScore();
+  }
+
+  function renderRpsScore() {
+    document.getElementById('rps-score').textContent =
+      `Victoria: ${rpsScore.win} · Derrota: ${rpsScore.lose} · Empate: ${rpsScore.tie}`;
+  }
+
+  function rpsReset() {
+    rpsScore = { win: 0, lose: 0, tie: 0 };
+    socket.emit('rps:score', rpsScore);
+    renderRpsScore();
+    document.getElementById('rps-result').textContent = '';
+  }
+
+  // =====================
+  // SOCKET
+  // =====================
+  initSocket((sock) => {
+    sock.on('init', (data) => {
+      rpsScore = data.rpsScore;
+    });
+    sock.on('online', updateOnlineBadge);
+    sock.on('ttt:move',  applyTttMove);
+    sock.on('ttt:reset', tttInit);
+    sock.on('rps:score', (score) => { rpsScore = score; renderRpsScore(); });
+  });
+
+  showGame('ttt');
+</script>
+</body>
+</html>

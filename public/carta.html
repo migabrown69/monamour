@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cartitas – MonAmour 💌</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page" style="padding-bottom:80px;">
+
+  <h1 class="title" style="margin-top:16px;">Cartitas 💌</h1>
+  <p class="subtitle">Escríbele algo bonito 🌸</p>
+
+  <div id="online-status" style="text-align:center; font-size:13px; margin-bottom:4px;"></div>
+
+  <div class="card">
+    <h2>Nueva cartita</h2>
+    <div class="form-group">
+      <label>Tu mensaje 🐒</label>
+      <textarea id="msg" placeholder="Escribe lo que quieras decirle..."></textarea>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+      <button class="btn-pink btn" onclick="addEmoji('💕')">💕</button>
+      <button class="btn-pink btn" onclick="addEmoji('🐒')">🐒</button>
+      <button class="btn-pink btn" onclick="addEmoji('🌸')">🌸</button>
+      <button class="btn-pink btn" onclick="addEmoji('🍫')">🍫</button>
+      <button class="btn-pink btn" onclick="addEmoji('✨')">✨</button>
+      <button class="btn-pink btn" onclick="addEmoji('🥰')">🥰</button>
+    </div>
+    <button class="btn" style="width:100%" onclick="enviar()">Enviar carta 💌</button>
+    <p id="send-ok" style="color:var(--brown-mid); text-align:center; margin-top:8px; font-weight:700; display:none;">
+      ¡Cartita enviada! 🎉
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Cartas recibidas <span class="badge" id="badge-rx" style="display:none;"></span></h2>
+    <div class="scroll-area" id="cartas-rx">
+      <p style="color:var(--brown-light); font-size:14px;">Cargando...</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Mis cartas enviadas</h2>
+    <div class="scroll-area" id="cartas-tx">
+      <p style="color:var(--brown-light); font-size:14px;">Cargando...</p>
+    </div>
+  </div>
+
+</div>
+
+<nav>
+  <a href="home.html"><span class="icon">🏠</span>Inicio</a>
+  <a href="carta.html" class="active"><span class="icon">💌</span>Cartas</a>
+  <a href="dibujo.html"><span class="icon">🎨</span>Dibujos</a>
+  <a href="juegos.html"><span class="icon">🎮</span>Juegos</a>
+</nav>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+<script>
+  const session = requireAuth();
+
+  function addEmoji(e) {
+    const ta = document.getElementById('msg');
+    ta.value += e;
+    ta.focus();
+  }
+
+  function enviar() {
+    const texto = document.getElementById('msg').value;
+    if (!texto.trim()) return;
+    socket.emit('carta:send', texto);
+    document.getElementById('msg').value = '';
+    const ok = document.getElementById('send-ok');
+    ok.style.display = 'block';
+    setTimeout(() => ok.style.display = 'none', 2500);
+  }
+
+  function renderCartas(cartas) {
+    const rx = cartas.filter(c => c.de !== session.who).reverse();
+    const tx = cartas.filter(c => c.de === session.who).reverse();
+    const noLeidas = rx.filter(c => !c.leida).length;
+
+    const badge = document.getElementById('badge-rx');
+    if (noLeidas > 0) { badge.textContent = noLeidas; badge.style.display = 'inline'; }
+    else badge.style.display = 'none';
+
+    const contRx = document.getElementById('cartas-rx');
+    contRx.innerHTML = rx.length === 0
+      ? '<p style="color:var(--brown-light); font-size:14px;">Aún no hay cartas 🐒</p>'
+      : rx.map(c => `
+          <div class="carta">
+            <div class="carta-de">${USERS[c.de].avatar} ${USERS[c.de].name} ${!c.leida ? '<span class="badge">Nuevo</span>' : ''}</div>
+            <div>${c.texto}</div>
+            <div class="carta-fecha">${formatDate(c.fecha)}</div>
+          </div>`).join('');
+
+    const contTx = document.getElementById('cartas-tx');
+    contTx.innerHTML = tx.length === 0
+      ? '<p style="color:var(--brown-light); font-size:14px;">Todavía no enviaste nada 💌</p>'
+      : tx.map(c => `
+          <div class="carta" style="opacity:0.85;">
+            <div class="carta-de">${USERS[c.de].avatar} Tú</div>
+            <div>${c.texto}</div>
+            <div class="carta-fecha">${formatDate(c.fecha)} ${c.leida ? '· Leída ✓' : '· Sin leer'}</div>
+          </div>`).join('');
+
+    // Marcar como leídas
+    socket.emit('carta:read', session.who);
+  }
+
+  initSocket((sock) => {
+    sock.on('init', ({ cartas }) => renderCartas(cartas));
+    sock.on('carta:new', (carta) => {
+      // recargar lista completa desde el server via carta:updated
+    });
+    sock.on('carta:updated', renderCartas);
+    sock.on('online', updateOnlineBadge);
+  });
+</script>
+</body>
+</html>
